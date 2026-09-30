@@ -5,6 +5,7 @@ timeline on a ticket is a complete record of who did what and when.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,6 +14,8 @@ from .models import (
     ALLOWED_TRANSITIONS,
     QUEUE_FOR_CATEGORY,
     SLA_TARGETS,
+    TRIAGE_QUEUE,
+    Category,
     CommentCreate,
     Priority,
     Status,
@@ -20,6 +23,8 @@ from .models import (
     compute_priority,
 )
 from .routing import Router, RoutingDecision
+
+log = logging.getLogger(__name__)
 
 AGENT_ROLES = {"agent", "admin"}
 # Requesters may only confirm or reject a fix on their own ticket.
@@ -95,6 +100,33 @@ def _unpause(t: dict, now: datetime) -> dict:
     return {"paused_seconds": t["paused_seconds"] + paused, "paused_since": None}
 
 
+def _triage(reason: str) -> RoutingDecision:
+    return RoutingDecision(Category.OTHER, TRIAGE_QUEUE, reason, 0.0)
+
+
+def _safe_route(router: Router, title: str, description: str) -> tuple[RoutingDecision, bool]:
+    """Ask the router, but never let routing lose a ticket.
+
+    Returns (decision, fell_back). If the router raises (an AI router timing
+    out, say) or returns a decision that breaks the contract, the ticket goes
+    to the triage queue and the reason is recorded for later review.
+    """
+    try:
+        d = router.route(title, description)
+    except Exception as exc:  # any router failure must degrade, not crash
+        log.warning("router %s failed; sending ticket to triage", type(router).__name__, exc_info=True)
+        return _triage(f"router failed ({type(exc).__name__}: {str(exc)[:200]}); sent to triage"), True
+
+    if not isinstance(d, RoutingDecision) or not isinstance(d.category, Category):
+        return _triage(f"router returned an invalid decision ({d!r:.200}); sent to triage"), True
+    if d.queue != QUEUE_FOR_CATEGORY[d.category]:
+        return _triage(f"router sent category {d.category.value} to queue {d.queue!r}, "
+                       f"expected {QUEUE_FOR_CATEGORY[d.category]!r}; sent to triage"), True
+    if not 0.0 <= d.confidence <= 1.0:
+        return _triage(f"router confidence {d.confidence!r} outside 0–1; sent to triage"), True
+    return d, False
+
+
 # ---- commands ------------------------------------------------------------
 
 def create_ticket(conn, data: TicketCreate, router: Router, now: datetime | None = None) -> int:
@@ -102,11 +134,12 @@ def create_ticket(conn, data: TicketCreate, router: Router, now: datetime | None
     get_user(conn, data.requester_id)
     priority = compute_priority(data.impact, data.urgency)
 
+    fell_back = False
     if data.category is not None:
         decision = RoutingDecision(data.category, QUEUE_FOR_CATEGORY[data.category],
                                    "category chosen by requester", 1.0)
     else:
-        decision = router.route(data.title, data.description)
+        decision, fell_back = _safe_route(router, data.title, data.description)
 
     with conn:
         cur = conn.execute(
@@ -122,7 +155,8 @@ def create_ticket(conn, data: TicketCreate, router: Router, now: datetime | None
         _log(conn, tid, data.requester_id, "created",
              f"Ticket created as {priority.value} (impact {data.impact.value}, "
              f"urgency {data.urgency.value})", now)
-        _log(conn, tid, None, "routed",
+        # A distinct event kind makes the fallback rate easy to measure.
+        _log(conn, tid, None, "routing_fallback" if fell_back else "routed",
              f"Routed to {decision.queue} as {decision.category.value}: "
              f"{decision.reason} (confidence {decision.confidence:.0%})", now)
     return tid

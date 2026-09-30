@@ -157,8 +157,13 @@ class Router(Protocol):
 Write an `LLMRouter` that returns a `RoutingDecision(category, queue, reason, confidence)`
 and set `ROUTER = LLMRouter()` in `main.py`. Some notes for that pass:
 
-- Keep `KeywordRouter` as a **fallback** for when the model errors, times out,
-  or returns low confidence. A router must never raise.
+- Routing can't lose a ticket. If a router raises (a model timing out, say) or
+  returns a decision that breaks the contract (queue doesn't match category,
+  confidence outside 0–1), `create_ticket()` sends the ticket to the triage
+  queue and logs a `routing_fallback` event with the reason. The fallback rate
+  is one query on the `events` table.
+- Consider falling back to `KeywordRouter` inside the LLM router for low
+  confidence answers, so triage only gets the tickets neither router can place.
 - The `reason` and `confidence` are already written to the audit trail, so
   AI decisions stay explainable.
 - Keep `KeywordRouter` as a **baseline** too. Measure the AI router against it on a

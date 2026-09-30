@@ -4,8 +4,10 @@ import pytest
 
 from app import services as svc
 from app.db import connect, init_db
-from app.models import CommentCreate, Level, Priority, Status, TicketCreate, compute_priority
-from app.routing import KeywordRouter
+from app.models import (
+    Category, CommentCreate, Level, Priority, Status, TicketCreate, compute_priority,
+)
+from app.routing import KeywordRouter, RoutingDecision
 
 T0 = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)
 router = KeywordRouter()
@@ -63,6 +65,52 @@ def test_explicit_category_overrides_router(conn, ids):
     t = svc.ticket_detail(conn, tid)["ticket"]
     assert t["queue"] == "Desktop Support"
     assert t["routing_reason"] == "category chosen by requester"
+
+
+class _CrashingRouter:
+    def route(self, title, description):
+        raise TimeoutError("model did not answer in 10s")
+
+
+class _StaticRouter:
+    def __init__(self, decision):
+        self.decision = decision
+
+    def route(self, title, description):
+        return self.decision
+
+
+def _create_with(conn, ids, a_router):
+    data = TicketCreate(title="VPN keeps dropping", description="The VPN disconnects every few minutes.",
+                        requester_id=ids["alice"])
+    return svc.create_ticket(conn, data, a_router, T0)
+
+
+def test_router_crash_still_creates_ticket_in_triage(conn, ids):
+    tid = _create_with(conn, ids, _CrashingRouter())
+    d = svc.ticket_detail(conn, tid)
+    assert (d["ticket"]["queue"], d["ticket"]["category"]) == ("Service Desk", "other")
+    assert "TimeoutError" in d["ticket"]["routing_reason"]
+    assert [e["kind"] for e in d["events"]] == ["created", "routing_fallback"]
+
+
+@pytest.mark.parametrize("decision", [
+    RoutingDecision(Category.NETWORK, "Applications", "wrong queue for category", 0.9),
+    RoutingDecision(Category.NETWORK, "Network Ops", "overconfident", 1.7),
+    "network",  # not a RoutingDecision at all
+])
+def test_router_contract_violations_fall_back_to_triage(conn, ids, decision):
+    tid = _create_with(conn, ids, _StaticRouter(decision))
+    d = svc.ticket_detail(conn, tid)
+    assert d["ticket"]["queue"] == "Service Desk"
+    assert d["events"][-1]["kind"] == "routing_fallback"
+
+
+def test_valid_router_decision_is_used_as_is(conn, ids):
+    ok = RoutingDecision(Category.NETWORK, "Network Ops", "stub", 0.8)
+    d = svc.ticket_detail(conn, _create_with(conn, ids, _StaticRouter(ok)))
+    assert d["ticket"]["queue"] == "Network Ops"
+    assert d["events"][-1]["kind"] == "routed"
 
 
 # ---- lifecycle ---------------------------------------------------------------

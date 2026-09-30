@@ -1,5 +1,7 @@
 # Help Desk
 
+[![CI](https://github.com/AcroIsTrash/helpdesk/actions/workflows/ci.yml/badge.svg)](https://github.com/AcroIsTrash/helpdesk/actions/workflows/ci.yml)
+
 An IT service desk built with FastAPI and SQLite. It models how real ticketing
 systems work: a ticket lifecycle with enforced rules, priority derived from
 impact and urgency, SLA clocks that pause while waiting on the customer, team

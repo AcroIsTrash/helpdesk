@@ -164,3 +164,7 @@ and set `ROUTER = LLMRouter()` in `main.py`. Some notes for that pass:
 - No email-to-ticket, attachments, or notifications
 - No database migrations; delete `helpdesk.db` after a schema change
 - SQLite with a connection per request; fine for a demo, swap for Postgres at scale
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -28,7 +28,7 @@ Requires Python 3.10 or newer.
 
 ```bash
 uv sync
-uv run uvicorn app.main:app --reload
+uv run python -m uvicorn app.main:app --reload
 ```
 
 **With pip:**
@@ -39,6 +39,10 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m uvicorn app.main:app --reload
 ```
+
+Both paths start programs as `python -m …` on purpose. On Windows 11 with
+Smart App Control, the small `.exe` launchers that package installers create
+(like `uvicorn.exe`) are unsigned and get blocked; `python.exe` is not.
 
 Open http://localhost:8000. Interactive API docs are at http://localhost:8000/docs.
 
@@ -56,7 +60,7 @@ Delete `helpdesk.db` to reset to fresh demo data.
 ## Tests
 
 ```bash
-uv run pytest                                            # with uv
+uv run python -m pytest                                  # with uv
 pip install -r requirements-dev.txt && python -m pytest  # with pip
 ```
 
@@ -135,6 +139,11 @@ uv lock
 uv export --no-dev --no-hashes -o requirements.txt
 uv export --no-hashes -o requirements-dev.txt
 ```
+
+The project uses plain `uvicorn` rather than `uvicorn[standard]`. The
+`standard` extra only adds speedups (httptools, uvloop, watchfiles), and their
+compiled files are the kind Windows Smart App Control blocks. A demo doesn't
+need the speed, and `--reload` still works without them.
 
 ## Adding AI routing
 

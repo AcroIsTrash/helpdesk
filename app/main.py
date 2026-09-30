@@ -1,6 +1,6 @@
 """FastAPI app: a JSON API under /api and a server-rendered UI.
 
-Run:  uvicorn app.main:app --reload
+Run:  uv run python -m uvicorn app.main:app --reload
 """
 from __future__ import annotations
 
